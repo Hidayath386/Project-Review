@@ -1,0 +1,114 @@
+import numpy as np
+import pandas as pd
+import json
+import tensorflow as tf
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Embedding, LSTM, Dense, Dropout
+from tensorflow.keras.utils import to_categorical
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+
+# ------------------------------
+# Configuration
+# ------------------------------
+VOCAB_SIZE = 10000
+MAX_SEQUENCE_LENGTH = 50
+EMBEDDING_DIM = 64
+RNN_UNITS = 64
+EPOCHS = 10
+BATCH_SIZE = 32
+
+# ------------------------------
+# Step 1: Load Dataset
+# ------------------------------
+df = pd.read_csv(r"C:\Users\dwara\OneDrive\Desktop\Hidayath Assign\main_data (2).csv")
+texts = df['content'].astype(str).tolist()
+labels = df['label'].tolist()
+
+# ------------------------------
+# Step 2: Label Encoding
+# ------------------------------
+label_encoder = LabelEncoder()
+y_encoded = label_encoder.fit_transform(labels)
+y = to_categorical(y_encoded)
+NUM_CLASSES = y.shape[1]
+
+# Save label classes for later use
+np.save("label_classes.npy", label_encoder.classes_)
+
+# ------------------------------
+# Step 3: Tokenization
+# ------------------------------
+tokenizer = Tokenizer(num_words=VOCAB_SIZE, oov_token="<OOV>")
+tokenizer.fit_on_texts(texts)
+X_seq = tokenizer.texts_to_sequences(texts)
+X = pad_sequences(X_seq, maxlen=MAX_SEQUENCE_LENGTH, padding='post', truncating='post')
+
+# Save tokenizer
+tokenizer_json = tokenizer.to_json()
+with open("tokenizer.json", "w") as f:
+    json.dump(tokenizer_json, f)
+
+# ------------------------------
+# Step 4: Split Dataset
+# ------------------------------
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=labels
+)
+
+# ------------------------------
+# Step 5: Build the LSTM Model
+# ------------------------------
+model = Sequential([
+    Embedding(input_dim=VOCAB_SIZE, output_dim=EMBEDDING_DIM, input_length=MAX_SEQUENCE_LENGTH),
+    LSTM(RNN_UNITS, activation='tanh', dropout=0.3, recurrent_dropout=0.2),
+    Dense(32, activation='relu'),
+    Dropout(0.2),
+    Dense(NUM_CLASSES, activation='softmax')
+])
+
+# Explicitly build the model to see real params in summary
+model.build(input_shape=(None, MAX_SEQUENCE_LENGTH))
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+model.summary()
+
+# ------------------------------
+# Step 6: Train the Model
+# ------------------------------
+history = model.fit(
+    X_train, y_train,
+    validation_split=0.1,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    verbose=1
+)
+
+# ------------------------------
+# Step 7: Evaluate Model
+# ------------------------------
+loss, acc = model.evaluate(X_test, y_test, verbose=0)
+print(f"Final Test Accuracy: {acc*100:.2f}%")
+
+# ------------------------------
+# Step 8: Save Model
+# ------------------------------
+model.save("sentiment_model.h5")
+print("Model saved as sentiment_model.h5")
+
+# ------------------------------
+# Step 9: Prediction Function
+# ------------------------------
+def predict_sentiment(sentence):
+    seq = tokenizer.texts_to_sequences([sentence])
+    padded = pad_sequences(seq, maxlen=MAX_SEQUENCE_LENGTH, padding='post')
+    pred = model.predict(padded, verbose=0)[0]
+    class_idx = np.argmax(pred)
+    sentiment = label_encoder.inverse_transform([class_idx])[0]
+    confidence = float(pred[class_idx])
+    return sentiment, confidence
+
+# Example
+sentiment, confidence = predict_sentiment("I love this product!")
+print(f"Sentence: 'I love this product!' => Sentiment: {sentiment}, Confidence: {confidence:.2f}")
